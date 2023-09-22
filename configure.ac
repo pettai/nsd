@@ -5,7 +5,7 @@ dnl
 sinclude(acx_nlnetlabs.m4)
 sinclude(dnstap/dnstap.m4)
 
-AC_INIT([NSD],[4.7.0],[nsd-bugs@nlnetlabs.nl])
+AC_INIT([NSD],[4.7.1],[nsd-bugs@nlnetlabs.nl])
 AC_CONFIG_HEADERS([config.h])
 
 #
@@ -569,7 +569,8 @@ AC_RUN_IFELSE([AC_LANG_SOURCE([[
 int main(void) { struct tm tm; char *res;
 res = strptime("20070207111842", "%Y%m%d%H%M%S", &tm);
 if (!res) return 1; return 0; }
-]])] , [eval "ac_cv_c_strptime_works=yes"], [eval "ac_cv_c_strptime_works=no"])
+]])] , [eval "ac_cv_c_strptime_works=yes"], [eval "ac_cv_c_strptime_works=no"],
+[eval "ac_cv_c_strptime_works=maybe"])
 else
 eval "ac_cv_c_strptime_works=maybe"
 fi

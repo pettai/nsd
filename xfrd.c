@@ -570,7 +570,10 @@ xfrd_process_soa_info_task(struct task_list_d* task)
 	xfrd_xfr_type* xfr;
 	xfrd_xfr_type* prev_xfr;
 	enum soainfo_hint hint;
-	time_t before, acquired = 0;
+#ifndef NDEBUG
+	time_t before;
+#endif
+	time_t acquired = 0;
 	DEBUG(DEBUG_IPC,1, (LOG_INFO, "xfrd: process SOAINFO %s",
 		dname_to_string(task->zname, 0)));
 	zone = (xfrd_zone_type*)rbtree_search(xfrd->zones, task->zname);
@@ -582,7 +585,9 @@ xfrd_process_soa_info_task(struct task_list_d* task)
 			hint == soainfo_bad ? "kept" : "lost"));
 		soa_ptr = NULL;
 		/* discard all updates */
+#ifndef NDEBUG
 		before = xfrd_time();
+#endif
 	} else {
 		uint8_t* p = (uint8_t*)task->zname + dname_total_size(
 			task->zname);
@@ -617,7 +622,9 @@ xfrd_process_soa_info_task(struct task_list_d* task)
 			(unsigned)ntohl(soa.serial)));
 		/* discard all updates received before initial reload unless
 		   reload was successful */
+#ifndef NDEBUG
 		before = xfrd->reload_cmd_first_sent;
+#endif
 	}
 
 	if(!zone) {
@@ -2733,6 +2740,78 @@ xfrd_handle_taskresult(xfrd_state_type* xfrd, struct task_list_d* task)
 		xfrd_process_zonestat_inc_task(xfrd, task);
 		break;
 #endif
+	case task_add_catzone: {
+		char* zname = (char*)task->zname;
+		char* pattern = zname + strlen(zname) + 1;
+		char* catname = pattern + strlen(pattern) + 1;
+		char* member_id = catname + strlen(catname) + 1;
+
+		struct zone_options* zopt = NULL;
+		pattern_options_type* patopt;
+
+		const dname_type* zdname = dname_parse(xfrd->region, zname);
+
+		log_msg(LOG_INFO, "now adding catzone %s %s %s %s", zname, pattern, catname, member_id);
+
+		patopt = pattern_options_find(xfrd->nsd->options, pattern);
+		if (!patopt) {
+			patopt = pattern_options_create(xfrd->region);
+			patopt->pname = region_strdup(xfrd->region, pattern);
+			pattern_options_add_modify(xfrd->nsd->options, patopt);
+		} 
+		zopt = zone_options_find(xfrd->nsd->options, zdname);
+		if (!zopt) {
+			zopt = zone_options_create(xfrd->region);
+			zopt->name = region_strdup(xfrd->region, zname);
+			zopt->pattern = patopt;
+			nsd_options_insert_zone(xfrd->nsd->options, zopt);
+		} else {
+			region_recycle(xfrd->region, (void*)zdname, dname_total_size(zdname));
+			log_msg(LOG_DEBUG, "catzone already added %s", zname);
+			return;
+		}
+		task_new_add_catzone(xfrd->nsd->task[xfrd->nsd->mytask],
+			xfrd->last_task, zname, pattern, catname, member_id,
+			getzonestatid(xfrd->nsd->options, zopt));
+		xfrd_set_reload_now(xfrd);
+		/* add to xfrd - notify (for master and slaves) */
+		init_notify_send(xfrd->notify_zones, xfrd->region, zopt);
+		/* add to xfrd - slave */
+		if (zone_is_slave(zopt)) {
+			xfrd_init_slave_zone(xfrd, zopt);
+		}
+		break;
+	}
+	case task_check_coo: {
+		char* zname = (char*)task->zname;
+		char* catname = zname + strlen(zname) + 1;
+		char* member_id = catname + strlen(catname) + 1;
+
+		log_msg(LOG_INFO, "check coo %s %s %s", zname, catname, member_id);
+
+		task_new_check_coo(xfrd->nsd->task[xfrd->nsd->mytask],
+			xfrd->last_task, zname, catname, member_id);
+		break;
+	}
+	case task_apply_pattern: {
+		char* member_id = (char*)task->zname;
+		char* pattern = member_id + strlen(member_id) + 1;
+
+		log_msg(LOG_INFO, "apply to member_id %s pattern %s", member_id, pattern);
+
+		task_new_apply_pattern(xfrd->nsd->task[xfrd->nsd->mytask],
+			xfrd->last_task, member_id, pattern);
+		break;
+	}
+	case task_del_zone: {
+		struct zone_options* zopt = 
+			zone_options_find(xfrd->nsd->options, task->zname);
+		if (zopt) zone_options_delete(xfrd->nsd->options, zopt);
+
+		task_new_del_zone(xfrd->nsd->task[xfrd->nsd->mytask],
+			xfrd->last_task, task->zname);
+		break;
+	}
 	default:
 		log_msg(LOG_WARNING, "unhandled task result in xfrd from "
 			"reload type %d", (int)task->task_type);

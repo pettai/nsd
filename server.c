@@ -87,6 +87,7 @@
 #endif
 #include "verify.h"
 #include "util/proxy_protocol.h"
+#include "cat-zones.h"
 
 #define RELOAD_SYNC_TIMEOUT 25 /* seconds */
 
@@ -2374,6 +2375,15 @@ server_reload(struct nsd *nsd, region_type* server_region, netio_type* netio,
 			   update(s), communicate soainfo_gone */
 			task_new_soainfo(nsd->task[nsd->mytask], &last_task,
 			                 zone, soainfo_gone);
+		} 
+		
+		if(zone->opts && 
+		zone->opts->pattern && 
+		zone->opts->pattern->is_catalog && 
+		zone->is_updated) {
+			DEBUG(DEBUG_CATZ, 1, (LOG_INFO, "Start catalog consumption"));
+			catalog_consumer_process(nsd, zone, 
+				nsd->task[nsd->mytask], &last_task);
 		}
 		zone->is_updated = 0;
 		zone->is_skipped = 0;
@@ -2527,6 +2537,9 @@ server_main(struct nsd *nsd)
 	pid_t reload_pid = -1;
 	sig_atomic_t mode;
 
+	struct radnode* node = NULL;
+	zone_type* zone = NULL;
+
 	/* Ensure we are the main process */
 	assert(nsd->server_kind == NSD_SERVER_MAIN);
 
@@ -2543,6 +2556,26 @@ server_main(struct nsd *nsd)
 
 	/* This_child MUST be 0, because this is the parent process */
 	assert(nsd->this_child == 0);
+
+	for(node = radix_first(nsd->db->zonetree);
+	    node != NULL;
+	    node = radix_next(node))
+	{
+		zone = (zone_type *)node->elem;
+		if (zone->opts->pattern->is_catalog && 
+		!zone->opts->pattern->catalog_member_pattern) {
+			log_msg(LOG_ERR,
+				"Zone %s is a catalog but misses the mandatory catalog-member-pattern configuration option!",
+				dname_to_string(zone->apex->dname, NULL));
+				nsd->mode = NSD_SHUTDOWN;
+		}
+		if (zone->opts->pattern->is_catalog) {
+			udb_ptr last_task;
+			log_msg(LOG_INFO, "scheduling zone %s for reload", 
+				dname_to_string(zone->apex->dname, NULL));
+			catalog_consumer_process(nsd, zone, nsd->task[nsd->mytask], &last_task);
+		}
+	}
 
 	/* Run the server until we get a shutdown signal */
 	while ((mode = nsd->mode) != NSD_SHUTDOWN) {
